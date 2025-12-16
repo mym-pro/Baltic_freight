@@ -258,7 +258,7 @@ class FFADataProcessor(DataLoader):
         
         # 处理FFA数据
         ffa_processed = self._process_ffa_data(ffa_data)
-        if ffa_processed is None:
+        if ffa_processed is None or ffa_processed.empty:
             return None, None
         
         # 创建透视表
@@ -424,7 +424,8 @@ class BalticExchangeDashboard:
         def update_data():
             """清空缓存和session_state数据"""
             for key in list(st.session_state.keys()):
-                del st.session_state[key]
+                if key not in ['_st', '_', 'config']:
+                    del st.session_state[key]
             st.cache_data.clear()
             st.rerun()
         
