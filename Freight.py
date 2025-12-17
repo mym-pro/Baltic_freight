@@ -1,457 +1,956 @@
 import streamlit as st
-import warnings
+st.set_page_config(layout="wide") #宽屏模式
+#st.text('updated') #st.text就是直接在页面上显示文本
+
+st.title('Baltic Exchange Dashboard')
+
+
+
+import streamlit as st
+import warnings; warnings.simplefilter('ignore') #把 Python 的所有警告（如链式赋值、过期 API）静默掉，让控制台干净，调试阶段可注释掉以便发现潜在问题。
 import pandas as pd
 import numpy as np
 from datetime import date
 from calendar import monthrange
-from pandas.tseries.offsets import BDay
+from pandas.tseries.offsets import BDay # Bday是工作日
 import requests
+import ftplib #波罗的海官网/部分经纪行仍提供 FTP 下载（txt/csv 格式），用来自动抓历史指数。
 
-# 忽略警告
-warnings.simplefilter('ignore')
+pd.set_option('display.max_rows',None)
+pd.set_option('display.max_columns',None)
+#让 DataFrame 不管多少行都 全部打印出来，不再出现中间省略号，这两行只是方便 开发调试阶段 在控制台里一眼看全表；上线后可以保留，也可以删掉，对最终用户界面没有任何影响。
 
-# 设置pandas显示选项
-pd.set_option('display.max_rows', None)
-pd.set_option('display.max_columns', None)
-
-
-class DataLoader:
-    """数据处理和加载类"""
-    
-    def __init__(self):
-        """初始化数据加载器"""
-        self.headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
-        self.api_endpoints = {
-            'spot': {
-                'cape': 'https://api.balticexchange.com/api/v1.3/feed/FDS041FOL8AMWM6CHZEXDRAG9P33TT5W/data',
-                'pmx': 'https://api.balticexchange.com/api/v1.3/feed/FDS72H2FOQWJSDTJBVW55HJY1Z6W8ZJ0/data',
-                'smx': 'https://api.balticexchange.com/api/v1.3/feed/FDSQZHFHC242QBA1M4OMIW89Q1GBJGCL/data',
-                'handy': 'https://api.balticexchange.com/api/v1.3/feed/FDSPMJYK538ET37RIGOY12PFFAXXYUIY/data'
-            },
-            'route': {
-                'cape': 'https://api.balticexchange.com/api/v1.3/feed/FDSIR2LD7ZH28DVT07YZDO77YD4K5T3J/data',
-                'pmx': 'https://api.balticexchange.com/api/v1.3/feed/FDSMSBFH191FZVM5NJ4NK51YY6QXCTO7/data',
-                'smx': 'https://api.balticexchange.com/api/v1.3/feed/FDSAIN68PQBQM977TO3VCL397UXBVYWV/data',
-                'handy': 'https://api.balticexchange.com/api/v1.3/feed/FDSREHV3FRHP773368630ERWCAIU7CX0/data'
-            },
-            'ffa': {
-                'pmx': 'https://api.balticexchange.com/api/v1.3/feed/FDSLG4CKMQ0QEYHE8NJ2DTGR2S6N5S7P/data',
-                'cape': 'https://api.balticexchange.com/api/v1.3/feed/FDS2QE6Y0F4LPFOKC4YYVCM38NYVR5DU/data',
-                'smx': 'https://api.balticexchange.com/api/v1.3/feed/FDSGGYH6236OC931DOFJ7O4RJ0CK0A8B/data',
-                'handy': 'https://api.balticexchange.com/api/v1.3/feed/FDSPIQYIH9UUI56BL6U83DUECJNMQKMW/data'
-            }
-        }
-        self.route_columns = {
-            'cape': ['C2', 'C3', 'C5', 'C7', 'C8', 'C9', 'C10', 'C14', 'C16', 'C17'],
-            'pmx': ['P1A', 'P2A', 'P3A', 'P4', 'P5', 'P6', 'P7', 'P8'],
-            'smx': ['S1B', 'S1C', 'S2', 'S3', 'S4A', 'S4B', 'S5', 'S8', 'S9', 'S10', 'S15'],
-            'handy': ['HS1', 'HS2', 'HS3', 'HS4', 'HS5', 'HS6', 'HS7']
-        }
-    
-    def get_date_params(self, business_days=15):
-        """获取API调用的日期参数"""
-        dateto = pd.to_datetime('today')
-        datefrom = dateto - BDay(business_days)
-        return {'from': datefrom, 'to': dateto}
-    
-    def fetch_api_data(self, url, params=None):
-        """从API获取数据"""
-        try:
-            response = requests.get(url, headers=self.headers, params=params)
-            response.raise_for_status()
-            return pd.DataFrame(response.json())
-        except Exception as e:
-            st.error(f"API请求失败: {e}")
-            return None
+st.write('Loading Data...')
 
 
-class SpotDataProcessor(DataLoader):
-    """现货数据处理类"""
-    
-    @st.cache_data()
-    def load_spot_data(self):
-        """加载现货货运数据"""
-        st.text('----Getting Spot Freight Data...')
-        
-        params = self.get_date_params()
-        data_frames = {}
-        
-        # 获取各类船型数据
-        for ship_type, url in self.api_endpoints['spot'].items():
-            df = self.fetch_api_data(url, params)
-            if df is not None and not df.empty:
-                temp_df = pd.DataFrame(df.loc[0, 'data'])
-                temp_df.set_index('date', inplace=True)
-                
-                # 重命名列
-                column_map = {
-                    'cape': 'C5TC',
-                    'pmx': 'P4TC',
-                    'smx': 'S10TC',
-                    'handy': 'HS7TC'
-                }
-                temp_df.rename(columns={'value': column_map[ship_type]}, inplace=True)
-                data_frames[ship_type] = temp_df
-        
-        # 合并所有数据
-        if not data_frames:
-            return None
-            
-        spot_new = data_frames['cape']
-        for ship_type in ['pmx', 'smx', 'handy']:
-            if ship_type in data_frames:
-                spot_new = pd.merge(spot_new, data_frames[ship_type], 
-                                  left_index=True, right_index=True, how='outer')
-        
-        spot_new.index = pd.to_datetime(spot_new.index)
-        
-        # 读取历史数据并合并
-        try:
-            spot_old = pd.read_csv('spot.csv')
-            spot_old.set_index('Date', inplace=True)
-            spot_old.index = pd.to_datetime(spot_old.index)
-            
-            st.text(f'Spot Data Before Update: {spot_old.index.date[-1]}')
-            spot = pd.concat([spot_old, spot_new])
-        except FileNotFoundError:
-            spot = spot_new
-            st.text('No historical spot data found')
-        
-        # 数据清洗和保存
-        spot.reset_index(inplace=True)
-        spot.rename(columns={'index': 'Date'}, inplace=True)
-        spot = spot.drop_duplicates()
-        spot.set_index('Date', inplace=True)
-        spot = spot.dropna(subset=['P4TC'])
-        
-        st.text(f'Spot Data After Update: {spot.index.date[-1]}')
-        spot.to_csv('spot.csv', index_label='Date')
-        
-        return spot
+st.text('----Getting Freight Data...')
 
-
-class RouteDataProcessor(DataLoader):
-    """路线数据处理类"""
-    
-    @st.cache_data()
-    def load_route_data(self, ship_type):
-        """加载路线数据"""
-        st.text(f'----Getting {ship_type.capitalize()} Route Data...')
-        
-        params = self.get_date_params()
-        
-        # 根据船型设置参数
-        config = {
-            'cape': {'main_url': self.api_endpoints['spot']['cape'], 'main_col': 'C5TC'},
-            'pmx': {'main_url': self.api_endpoints['spot']['pmx'], 'main_col': 'P4TC'},
-            'smx': {'main_url': self.api_endpoints['spot']['smx'], 'main_col': 'S10TC'},
-            'handy': {'main_url': self.api_endpoints['spot']['handy'], 'main_col': 'HS7TC'}
-        }
-        
-        # 获取主数据
-        main_data = self.fetch_api_data(config[ship_type]['main_url'], params)
-        if main_data is None or main_data.empty:
-            return None
-            
-        main_df = pd.DataFrame(main_data.loc[0, 'data'])
-        main_df.set_index('date', inplace=True)
-        main_df.rename(columns={'value': config[ship_type]['main_col']}, inplace=True)
-        
-        # 获取路线数据
-        route_data = self.fetch_api_data(self.api_endpoints['route'][ship_type], params)
-        if route_data is None:
-            return None
-        
-        # 合并所有路线数据
-        route_df = main_df.copy()
-        route_cols = self.route_columns[ship_type]
-        
-        for i, col_name in enumerate(route_cols):
-            if i < len(route_data):
-                temp_df = pd.DataFrame(route_data.loc[i, 'data'])
-                temp_df.set_index('date', inplace=True)
-                temp_df.rename(columns={'value': col_name}, inplace=True)
-                route_df = pd.merge(route_df, temp_df, 
-                                   left_index=True, right_index=True, how='outer')
-        
-        route_df.index = pd.to_datetime(route_df.index)
-        
-        # 读取历史数据并合并
-        try:
-            filename = f'{ship_type}route.csv'
-            route_old = pd.read_csv(filename)
-            route_old.set_index('Date', inplace=True)
-            route_old.index = pd.to_datetime(route_old.index)
-            
-            st.text(f'{ship_type.capitalize()} Route Data Before Update: {route_old.index.date[-1]}')
-            route_df = pd.concat([route_old, route_df])
-        except FileNotFoundError:
-            st.text(f'No historical {ship_type} route data found')
-        
-        # 数据清洗和保存
-        route_df.reset_index(inplace=True)
-        route_df.rename(columns={'index': 'Date'}, inplace=True)
-        route_df = route_df.drop_duplicates(subset='Date', keep='last')
-        route_df.set_index('Date', inplace=True)
-        
-        st.text(f'{ship_type.capitalize()} Route Data After Update: {route_df.index.date[-1]}')
-        route_df.to_csv(f'{ship_type}route.csv', index_label='Date')
-        
-        return route_df
-
-
-class FFADataProcessor(DataLoader):
-    """FFA数据处理类"""
-    
-    def __init__(self):
-        """初始化FFA数据处理器"""
-        super().__init__()
-        self.month_mapping = {
-            'Jan': 'M1', 'Feb': 'M2', 'Mar': 'M3', 'Apr': 'M4', 'May': 'M5', 'Jun': 'M6',
-            'Jul': 'M7', 'Aug': 'M8', 'Sep': 'M9', 'Oct': 'M10', 'Nov': 'M11', 'Dec': 'M12',
-            'Feb/Mar': 'Q1', 'May/Jun': 'Q2', 'Aug/Sep': 'Q3', 'Nov/Dec': 'Q4', 'Cal': 'Y'
-        }
-        
-        self.ffa_config = {
-            'pmx': {
-                'columns': ['4TC_PCURMON','4TC_P+1MON','4TC_P+2MON','4TC_P+3MON','4TC_P+4MON','4TC_P+5MON', 
-                           '4TC_PCURQ','4TC_P+1Q','4TC_P+2Q','4TC_P+3Q','4TC_P+4Q','4TC_P+5Q',
-                           '4TC_P+1CAL','4TC_P+2CAL','4TC_P+3CAL','4TC_P+4CAL','4TC_P+5CAL','4TC_P+6CAL','4TC_P+7CAL'],
-                'files': ['p4tc.csv', 'p4tc_r.csv'],
-                'spot_col': 'P4TC'
-            },
-            'cape': {
-                'columns': ['5TC_CCURMON','5TC_C+1MON','5TC_C+2MON','5TC_C+3MON','5TC_C+4MON','5TC_C+5MON', 
-                           '5TC_CCURQ','5TC_C+1Q','5TC_C+2Q','5TC_C+3Q','5TC_C+4Q','5TC_C+5Q',
-                           '5TC_C+1CAL','5TC_C+2CAL','5TC_C+3CAL','5TC_C+4CAL','5TC_C+5CAL','5TC_C+6CAL','5TC_C+7CAL'],
-                'files': ['c5tc.csv', 'c5tc_r.csv'],
-                'spot_col': 'C5TC'
-            },
-            'smx': {
-                'columns': ['10TC_SCURMON','10TC_S+1MON','10TC_S+2MON','10TC_S+3MON','10TC_S+4MON','10TC_S+5MON', 
-                           '10TC_SCURQ','10TC_S+1Q','10TC_S+2Q','10TC_S+3Q','10TC_S+4Q',
-                           '10TC_S+1CAL','10TC_S+2CAL','10TC_S+3CAL','10TC_S+4CAL','10TC_S+5CAL','10TC_S+6CAL','10TC_S+7CAL'],
-                'files': ['s10tc.csv', 's10tc_r.csv'],
-                'spot_col': 'S10TC'
-            },
-            'handy': {
-                'columns': ['TC_H38CURMON','TC_H38+1MON','TC_H38+2MON','TC_H38+3MON','TC_H38+4MON','TC_H38+5MON', 
-                           'TC_H38CURQ','TC_H38+1Q','TC_H38+2Q','TC_H38+3Q','TC_H38+4Q',
-                           'TC_H38+1CAL','TC_H38+2CAL','TC_H38+3CAL','TC_H38+4CAL','TC_H38+5CAL','TC_H38+6CAL','TC_H38+7CAL'],
-                'files': ['hs7tc.csv', 'hs7tc_r.csv'],
-                'spot_col': 'HS7TC'
-            }
-        }
-    
-    @st.cache_data()
-    def load_ffa_data(self, ship_type):
-        """加载FFA数据"""
-        st.text(f'----Getting {ship_type.upper()} FFA Data...')
-        
-        params = self.get_date_params()
-        url = self.api_endpoints['ffa'][ship_type]
-        
-        # 获取FFA数据
-        ffa_data = self.fetch_api_data(url, params)
-        if ffa_data is None or ffa_data.empty:
-            return None, None
-        
-        # 处理FFA数据
-        ffa_processed = self._process_ffa_data(ffa_data)
-        if ffa_processed is None or ffa_processed.empty:
-            return None, None
-        
-        # 创建透视表
-        ffa_pt1, ffa_pt2 = self._create_pivot_tables(ffa_processed, ship_type)
-        
-        # 保存数据
-        ffa_final1 = self._save_ffa_data(ffa_pt1, ship_type, 0)
-        ffa_final2 = self._save_ffa_data(ffa_pt2, ship_type, 1)
-        
-        # 合并现货数据
-        spot_col = self.ffa_config[ship_type]['spot_col']
-        spot_data = st.session_state['spot'][[spot_col]]
-        
-        if ffa_final1 is not None:
-            ffa_final1 = pd.merge(spot_data, ffa_final1, left_index=True, right_index=True, how='outer')
-            ffa_final1.dropna(subset=[spot_col], inplace=True)
-        
-        if ffa_final2 is not None:
-            ffa_final2 = pd.merge(spot_data, ffa_final2, left_index=True, right_index=True, how='outer')
-            ffa_final2.dropna(subset=[spot_col], inplace=True)
-        
-        return ffa_final1, ffa_final2
-    
-    def _process_ffa_data(self, ffa_data):
-        """处理原始FFA数据"""
-        try:
-            ffa_processed = pd.DataFrame()
-            for j in range(len(ffa_data.index)):
-                date_val = ffa_data.loc[j, 'date']
-                groups_df = pd.DataFrame(ffa_data.loc[j, 'groups'])
-                
-                for i in range(len(groups_df.index)):
-                    period_type = groups_df.loc[i, 'periodType']
-                    projections_df = pd.DataFrame(groups_df.loc[i, 'projections'])
-                    projections_df['periodType'] = period_type
-                    projections_df['date'] = date_val
-                    ffa_processed = pd.concat([ffa_processed, projections_df])
-            
-            # 处理月份和年份
-            ffa_processed[['Month', 'Year']] = ffa_processed['period'].str.split(' ', expand=True)
-            ffa_processed['Month'] = ffa_processed['Month'].replace(self.month_mapping)
-            ffa_processed['Contract'] = '20' + ffa_processed['Year'] + '_' + ffa_processed['Month']
-            
-            return ffa_processed
-        except Exception as e:
-            st.error(f"处理FFA数据失败: {e}")
-            return None
-    
-    def _create_pivot_tables(self, ffa_processed, ship_type):
-        """创建FFA透视表"""
-        # 透视表1：按合约分类
-        ffa_pt1 = ffa_processed.pivot_table(index='archiveDate', columns='Contract', 
-                                           values='value', aggfunc='mean')
-        ffa_pt1.index = pd.to_datetime(ffa_pt1.index)
-        
-        # 透视表2：按路线标识符分类
-        ffa_pt2 = ffa_processed.pivot_table(index='archiveDate', columns='identifier', 
-                                           values='value', aggfunc='mean')
-        ffa_pt2.index = pd.to_datetime(ffa_pt2.index)
-        
-        # 根据船型筛选特定的列
-        if ship_type in self.ffa_config:
-            ffa_pt2 = ffa_pt2[self.ffa_config[ship_type]['columns']]
-        
-        return ffa_pt1, ffa_pt2
-    
-    def _save_ffa_data(self, ffa_data, ship_type, file_index):
-        """保存FFA数据到CSV文件"""
-        if ffa_data is None or ffa_data.empty:
-            return None
-        
-        filename = self.ffa_config[ship_type]['files'][file_index]
-        
-        try:
-            ffa_old = pd.read_csv(filename)
-            ffa_old.set_index('Date', inplace=True)
-            ffa_old.index = pd.to_datetime(ffa_old.index)
-            
-            if file_index == 0:
-                st.text(f'FFA Data Before Update: {ffa_old.index.date[-1]}')
-            
-            ffa_final = pd.concat([ffa_old, ffa_data])
-            ffa_final.reset_index(inplace=True)
-            ffa_final.rename(columns={'index': 'Date'}, inplace=True)
-            ffa_final = ffa_final.drop_duplicates()
-            ffa_final.set_index('Date', inplace=True)
-            
-            if file_index == 0:
-                st.text(f'FFA Data After Update: {ffa_final.index.date[-1]}')
-            
-            ffa_final.to_csv(filename, index_label='Date')
-        except FileNotFoundError:
-            ffa_final = ffa_data
-            ffa_final.to_csv(filename, index_label='Date')
-        
-        return ffa_final
-
-
-class BalticExchangeDashboard:
+#Getting Spot Freight Data
+#@st.cache_data()
+def load_spot_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today') #获取今天日期
+    datefrom=dateto-BDay(15) #向前推15个工作日，不考虑节假日
+    params={'from':datefrom,'to':dateto}
+    urlcape='https://api.balticexchange.com/api/v1.3/feed/FDS041FOL8AMWM6CHZEXDRAG9P33TT5W/data'
+    urlpmx='https://api.balticexchange.com/api/v1.3/feed/FDS72H2FOQWJSDTJBVW55HJY1Z6W8ZJ0/data'
+    urlsmx='https://api.balticexchange.com/api/v1.3/feed/FDSQZHFHC242QBA1M4OMIW89Q1GBJGCL/data'
+    urlhandy='https://api.balticexchange.com/api/v1.3/feed/FDSPMJYK538ET37RIGOY12PFFAXXYUIY/data'
+ 
+ #四个市场的API接口，不用管对方的数据具体怎么来的，怎么计算得出的，我只需要请求就能得到json封装的数据 。json就是“键值对”作为外壳，里面可以嵌套各种有序列表或者数组
     """
-    波罗的海交易所仪表板主类
-    用于获取和处理波罗的海交易所的货运数据和FFA数据
+        键值对（用大括号框起来）
+        {
+        "name": "Alice",
+        "age": 25,
+        "vip": true
+        }
+    """  
+
+    response = requests.get(urlcape, headers=headers,params=params) #应该是波交所的api文档要求这样写的，params里面协商需要获取的数据日期范围
+    df=pd.DataFrame(response.json()) #将json转为dataframe，可以打印查看一下数据长什么样
+
     """
-    
-    def __init__(self):
-        """
-        初始化仪表板
-        """
-        self.spot_processor = SpotDataProcessor()
-        self.route_processor = RouteDataProcessor()
-        self.ffa_processor = FFADataProcessor()
-        
-        self.init_ui()
-        self.init_session_state()
-    
-    def init_ui(self):
-        """初始化用户界面"""
-        st.set_page_config(layout="wide")
-        st.title('Baltic Exchange Dashboard')
-    
-    def init_session_state(self):
-        """初始化Streamlit的session_state变量"""
-        session_state_keys = [
-            'spot', 'caperoute', 'pmxroute', 'smxroute', 'handyroute',
-            'p4tc', 'p4tc_r', 'c5tc', 'c5tc_r', 's10tc', 's10tc_r',
-            'hs7tc', 'hs7tc_r'
-        ]
-        
-        for key in session_state_keys:
-            if key not in st.session_state:
-                st.session_state[key] = None
-    
-    def load_all_data(self):
-        """加载所有数据到session_state"""
-        st.write('Loading Data...')
-        
-        # 加载现货数据
-        spot_data = self.spot_processor.load_spot_data()
-        if spot_data is not None:
-            st.session_state['spot'] = spot_data
-        
-        # 加载各类船型路线数据
-        route_types = ['cape', 'pmx', 'smx', 'handy']
-        for route_type in route_types:
-            route_data = self.route_processor.load_route_data(route_type)
-            if route_data is not None:
-                st.session_state[f'{route_type}route'] = route_data
-        
-        # 加载各类船型FFA数据
-        ffa_types = ['pmx', 'cape', 'smx', 'handy']
-        for ffa_type in ffa_types:
-            ffa_data1, ffa_data2 = self.ffa_processor.load_ffa_data(ffa_type)
-            if ffa_data1 is not None:
-                st.session_state[f'{ffa_type[0]}{ffa_type[1:]}tc'] = ffa_data1
-            if ffa_data2 is not None:
-                st.session_state[f'{ffa_type[0]}{ffa_type[1:]}tc_r'] = ffa_data2
-        
-        st.text('Freight Data Done')
-        st.write('All Data Loaded!!')
-    
-    def display_update_button(self):
-        """显示数据更新按钮"""
-        def update_data():
-            """清空缓存和session_state数据"""
-            for key in list(st.session_state.keys()):
-                if key not in ['_st', '_', 'config']:
-                    del st.session_state[key]
-            st.cache_data.clear()
-            st.rerun()
-        
-        st.button('Update Data', on_click=update_data)
-        st.text('数据每12小时自动重新加载以获取潜在更新。')
-        st.text('如果您想立即触发重新加载，请点击上面的"Update Data"按钮。')
-    
-    def run(self):
-        """运行仪表板主程序"""
-        # 加载所有数据
-        self.load_all_data()
-        
-        # 显示更新按钮
-        self.display_update_button()
-
-
-def main():
+获取到的数据长这样
+id        shortCode   shortDescription        displayGroup datumUnit  datumPrecision     datumStartOn          datumEndOn                 data                                                                                                                                        apiIdentifier
+C5TC      C5TC Capesize Timecharter Average     Capesize     $/day         0           2014-02-24T00:00:00  2025-10-21T10:57:49 [{'value': 23968.0, 'date': '2025-10-01'}, {'value': 22562.0, 'date': '2025-10-02'}, {'value': 22595.0, 'date': '2025-10-03'}, {'value': 23453.0, 'date': '2025-10-06'}, {'value': 23927.0, 'date': '2025-10-07'}, {'value': 24252.0, 'date': '2025-10-08'}, {'value': 23101.0, 'date': '2025-10-09'}, {'value': 23216.0, 'date': '2025-10-10'}, {'value': 28132.0, 'date': '2025-10-13'}, {'value': 24938.0, 'date': '2025-10-14'}, {'value': 24185.0, 'date': '2025-10-15'}, {'value': 25358.0, 'date': '2025-10-16'}, {'value': 25882.0, 'date': '2025-10-17'}, {'value': 25944.0, 'date': '2025-10-20'}, {'value': 26404.0, 'date': '2025-10-21'}] IDS9SQAME2W2VRO93ON6HOL9TOI04E7S
     """
-    主函数：创建仪表板实例并运行
-    """
-    # 创建仪表板实例
-    dashboard = BalticExchangeDashboard()
+    spotcape=pd.DataFrame(df.loc[0,'data'])
+    spotcape.set_index('date',inplace=True)
+    spotcape.rename(columns={'value':'C5TC'},inplace=True)
+
+    response = requests.get(urlpmx, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+    spotpmx=pd.DataFrame(df.loc[0,'data'])
+    spotpmx.set_index('date',inplace=True)
+    spotpmx.rename(columns={'value':'P4TC'},inplace=True)
+
+    response = requests.get(urlsmx, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+    spotsmx=pd.DataFrame(df.loc[0,'data'])
+    spotsmx.set_index('date',inplace=True)
+    spotsmx.rename(columns={'value':'S10TC'},inplace=True)
+
+    response = requests.get(urlhandy, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+    spothandy=pd.DataFrame(df.loc[0,'data'])
+    spothandy.set_index('date',inplace=True)
+    spothandy.rename(columns={'value':'HS7TC'},inplace=True)
+
+    spotnew=pd.merge(spotcape,spotpmx,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotsmx,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spothandy,left_index=True,right_index=True,how='outer')
+    spotnew.index=pd.to_datetime(spotnew.index)
+
+    spot=pd.read_csv('spot.csv')
+    spotold=spot.set_index('Date')
+    spotold.index=pd.to_datetime(spotold.index)
+
+    st.text('Spot Data Before Update: '+str(spotold.index.date[-1]))
+
+    spot=pd.concat([spotold,spotnew])
+    spot.reset_index(inplace=True)
+    spot.rename(columns={'index':'Date'},inplace=True)
+    spot=spot.drop_duplicates()
+    spot.set_index('Date',inplace=True)
+    spot=spot.dropna(subset=['P4TC'])
+
+    st.text('Spot Data After Update: '+str(spot.index.date[-1]))
+
+    spot.to_csv('spot.csv',index_label='Date')
+
+    return spot
+
+spot=load_spot_data()
+
+
+#Getting Spot Freight Data if API doesn't work
+@st.cache_data()
+def load_spot_data_backup():
+    spot=pd.read_csv('Baltic Exchange - Historic Data.csv')
+    spot.set_index('Date',inplace=True)
+    spot.index=pd.to_datetime(spot.index,dayfirst=True)
+    #spot=spot[spot.index>=pd.to_datetime(date(2015,1,1))]
+
+    return spot
+
+
+#spot=load_spot_data_backup()
+
+
+if 'spot' not in st.session_state:
+    st.session_state['spot']=spot
+
+
+#Getting Capesize Route Data
+@st.cache_data()
+def load_caperoute_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlcape='https://api.balticexchange.com/api/v1.3/feed/FDS041FOL8AMWM6CHZEXDRAG9P33TT5W/data'
+    urlcaperoute='https://api.balticexchange.com/api/v1.3/feed/FDSIR2LD7ZH28DVT07YZDO77YD4K5T3J/data'
+
+    response = requests.get(urlcape, headers=headers,params=params)
+    df=pd.DataFrame(response.json())  
+    spotcape=pd.DataFrame(df.loc[0,'data'])
+    spotcape.set_index('date',inplace=True)
+    spotcape.rename(columns={'value':'C5TC'},inplace=True)
+
+    response = requests.get(urlcaperoute, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+
+    spotc2=pd.DataFrame(df.loc[0,'data'])
+    spotc2.set_index('date',inplace=True)
+    spotc2.rename(columns={'value':'C2'},inplace=True)
+
+    spotc3=pd.DataFrame(df.loc[1,'data'])
+    spotc3.set_index('date',inplace=True)
+    spotc3.rename(columns={'value':'C3'},inplace=True)
+
+    spotc5=pd.DataFrame(df.loc[2,'data'])
+    spotc5.set_index('date',inplace=True)
+    spotc5.rename(columns={'value':'C5'},inplace=True)
+
+    spotc7=pd.DataFrame(df.loc[3,'data'])
+    spotc7.set_index('date',inplace=True)
+    spotc7.rename(columns={'value':'C7'},inplace=True)
+
+    spotc8=pd.DataFrame(df.loc[4,'data'])
+    spotc8.set_index('date',inplace=True)
+    spotc8.rename(columns={'value':'C8'},inplace=True)
+
+    spotc9=pd.DataFrame(df.loc[5,'data'])
+    spotc9.set_index('date',inplace=True)
+    spotc9.rename(columns={'value':'C9'},inplace=True)
+
+    spotc10=pd.DataFrame(df.loc[6,'data'])
+    spotc10.set_index('date',inplace=True)
+    spotc10.rename(columns={'value':'C10'},inplace=True)
+
+    spotc14=pd.DataFrame(df.loc[7,'data'])
+    spotc14.set_index('date',inplace=True)
+    spotc14.rename(columns={'value':'C14'},inplace=True)
+
+    spotc16=pd.DataFrame(df.loc[8,'data'])
+    spotc16.set_index('date',inplace=True)
+    spotc16.rename(columns={'value':'C16'},inplace=True)
+
+    spotc17=pd.DataFrame(df.loc[9,'data'])
+    spotc17.set_index('date',inplace=True)
+    spotc17.rename(columns={'value':'C17'},inplace=True)
+
+    spotnew=pd.merge(spotcape,spotc2,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc3,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc5,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc7,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc8,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc9,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc10,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc14,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc16,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotc17,left_index=True,right_index=True,how='outer')
+    spotnew.index=pd.to_datetime(spotnew.index)
+
+    spot=pd.read_csv('caperoute.csv')
+    spotold=spot.set_index('Date')
+    spotold.index=pd.to_datetime(spotold.index)
+
+    st.text('Capesize Route Data Before Update: '+str(spotold.index.date[-1]))
+
+    spot=pd.concat([spotold,spotnew])
+    spot.reset_index(inplace=True)
+    spot.rename(columns={'index':'Date'},inplace=True)
+    spot=spot.drop_duplicates(subset='Date',keep='last')
+    spot.set_index('Date',inplace=True)
+
+    st.text('Capesize Route Data After Update: '+str(spot.index.date[-1]))
+
+    spot.to_csv('caperoute.csv',index_label='Date')
+
+    return spot
+
+caperoute=load_caperoute_data()
+
+if 'caperoute' not in st.session_state:
+    st.session_state['caperoute']=caperoute
+
+#Getting Panamax Route Data
+@st.cache_data()
+def load_pmxroute_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlpmx='https://api.balticexchange.com/api/v1.3/feed/FDS72H2FOQWJSDTJBVW55HJY1Z6W8ZJ0/data'
+    urlpmxroute='https://api.balticexchange.com/api/v1.3/feed/FDSMSBFH191FZVM5NJ4NK51YY6QXCTO7/data'
+
+    response = requests.get(urlpmx, headers=headers,params=params)
+    df=pd.DataFrame(response.json())  
+    spotpmx=pd.DataFrame(df.loc[0,'data'])
+    spotpmx.set_index('date',inplace=True)
+    spotpmx.rename(columns={'value':'P4TC'},inplace=True)
+
+    response = requests.get(urlpmxroute, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+
+    spotp1a=pd.DataFrame(df.loc[0,'data'])
+    spotp1a.set_index('date',inplace=True)
+    spotp1a.rename(columns={'value':'P1A'},inplace=True)
+
+    spotp2a=pd.DataFrame(df.loc[1,'data'])
+    spotp2a.set_index('date',inplace=True)
+    spotp2a.rename(columns={'value':'P2A'},inplace=True)
+
+    spotp3a=pd.DataFrame(df.loc[2,'data'])
+    spotp3a.set_index('date',inplace=True)
+    spotp3a.rename(columns={'value':'P3A'},inplace=True)
+
+    spotp4=pd.DataFrame(df.loc[3,'data'])
+    spotp4.set_index('date',inplace=True)
+    spotp4.rename(columns={'value':'P4'},inplace=True)
+
+    spotp5=pd.DataFrame(df.loc[4,'data'])
+    spotp5.set_index('date',inplace=True)
+    spotp5.rename(columns={'value':'P5'},inplace=True)
+
+    spotp6=pd.DataFrame(df.loc[5,'data'])
+    spotp6.set_index('date',inplace=True)
+    spotp6.rename(columns={'value':'P6'},inplace=True)
+
+    spotp7=pd.DataFrame(df.loc[6,'data'])
+    spotp7.set_index('date',inplace=True)
+    spotp7.rename(columns={'value':'P7'},inplace=True)
+
+    spotp8=pd.DataFrame(df.loc[7,'data'])
+    spotp8.set_index('date',inplace=True)
+    spotp8.rename(columns={'value':'P8'},inplace=True)
+
+    spotnew=pd.merge(spotpmx,spotp1a,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotp2a,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotp3a,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotp4,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotp5,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotp6,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotp7,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotp8,left_index=True,right_index=True,how='outer')
+    spotnew.index=pd.to_datetime(spotnew.index)
+
+    spot=pd.read_csv('pmxroute.csv')
+    spotold=spot.set_index('Date')
+    spotold.index=pd.to_datetime(spotold.index)
+
+    st.text('Panamax Route Data Before Update: '+str(spotold.index.date[-1]))
+
+    spot=pd.concat([spotold,spotnew])
+    spot.reset_index(inplace=True)
+    spot.rename(columns={'index':'Date'},inplace=True)
+    spot=spot.drop_duplicates(subset='Date',keep='last')
+    spot.set_index('Date',inplace=True)
     
-    # 运行仪表板
-    dashboard.run()
+
+    st.text('Panamax Route Data After Update: '+str(spot.index.date[-1]))
+
+    spot.to_csv('pmxroute.csv',index_label='Date')
+
+    return spot
+
+pmxroute=load_pmxroute_data()
+
+if 'pmxroute' not in st.session_state:
+    st.session_state['pmxroute']=pmxroute
+
+#Getting Supramax Route Data
+@st.cache_data()
+def load_smxroute_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlsmx='https://api.balticexchange.com/api/v1.3/feed/FDSQZHFHC242QBA1M4OMIW89Q1GBJGCL/data'
+    urlsmx11='https://api.balticexchange.com/api/v1.3/feed/FDS9DM57YZN3GFGRUBDLPDSR88RL18I8/data'
+    urlsmxroute='https://api.balticexchange.com/api/v1.3/feed/FDSAIN68PQBQM977TO3VCL397UXBVYWV/data'
+
+    response = requests.get(urlsmx, headers=headers,params=params)
+    df=pd.DataFrame(response.json())  
+    spotsmx=pd.DataFrame(df.loc[0,'data'])
+    spotsmx.set_index('date',inplace=True)
+    spotsmx.rename(columns={'value':'S10TC'},inplace=True)
+
+    response = requests.get(urlsmx11, headers=headers,params=params)
+    df=pd.DataFrame(response.json())  
+    spotsmx11=pd.DataFrame(df.loc[0,'data'])
+    spotsmx11.set_index('date',inplace=True)
+    spotsmx11.rename(columns={'value':'S11TC'},inplace=True)
+
+    response = requests.get(urlsmxroute, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+
+    spots1b=pd.DataFrame(df.loc[0,'data'])
+    spots1b.set_index('date',inplace=True)
+    spots1b.rename(columns={'value':'S1B'},inplace=True)
+
+    spots1c=pd.DataFrame(df.loc[1,'data'])
+    spots1c.set_index('date',inplace=True)
+    spots1c.rename(columns={'value':'S1C'},inplace=True)
+
+    spots2=pd.DataFrame(df.loc[2,'data'])
+    spots2.set_index('date',inplace=True)
+    spots2.rename(columns={'value':'S2'},inplace=True)
+
+    spots3=pd.DataFrame(df.loc[3,'data'])
+    spots3.set_index('date',inplace=True)
+    spots3.rename(columns={'value':'S3'},inplace=True)
+
+    spots4a=pd.DataFrame(df.loc[4,'data'])
+    spots4a.set_index('date',inplace=True)
+    spots4a.rename(columns={'value':'S4A'},inplace=True)
+
+    spots4b=pd.DataFrame(df.loc[5,'data'])
+    spots4b.set_index('date',inplace=True)
+    spots4b.rename(columns={'value':'S4B'},inplace=True)
+
+    spots5=pd.DataFrame(df.loc[6,'data'])
+    spots5.set_index('date',inplace=True)
+    spots5.rename(columns={'value':'S5'},inplace=True)
+
+    spots8=pd.DataFrame(df.loc[7,'data'])
+    spots8.set_index('date',inplace=True)
+    spots8.rename(columns={'value':'S8'},inplace=True)
+
+    spots9=pd.DataFrame(df.loc[8,'data'])
+    spots9.set_index('date',inplace=True)
+    spots9.rename(columns={'value':'S9'},inplace=True)
+
+    spots10=pd.DataFrame(df.loc[9,'data'])
+    spots10.set_index('date',inplace=True)
+    spots10.rename(columns={'value':'S10'},inplace=True)
+
+    spots15=pd.DataFrame(df.loc[10,'data'])
+    spots15.set_index('date',inplace=True)
+    spots15.rename(columns={'value':'S15'},inplace=True)
+
+    spotnew=pd.merge(spotsmx,spots1b,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots1c,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots2,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots3,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots4a,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots4b,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots5,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots8,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots9,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots10,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spots15,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spotsmx11,left_index=True,right_index=True,how='outer')
+    spotnew.index=pd.to_datetime(spotnew.index)
+
+    spot=pd.read_csv('smxroute.csv')
+    spotold=spot.set_index('Date')
+    spotold.index=pd.to_datetime(spotold.index)
+
+    st.text('Supramax Route Data Before Update: '+str(spotold.index.date[-1]))
+
+    spot=pd.concat([spotold,spotnew])
+    spot.reset_index(inplace=True)
+    spot.rename(columns={'index':'Date'},inplace=True)
+    spot=spot.drop_duplicates(subset='Date',keep='last')
+    spot.set_index('Date',inplace=True)
+
+    st.text('Supramax Route Data After Update: '+str(spot.index.date[-1]))
+
+    spot.to_csv('smxroute.csv',index_label='Date')
+
+    return spot
+
+smxroute=load_smxroute_data()
+
+if 'smxroute' not in st.session_state:
+    st.session_state['smxroute']=smxroute
 
 
-if __name__ == "__main__":
-    main()
+#Getting Handysize Route Data
+@st.cache_data()
+def load_handyroute_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlhandy='https://api.balticexchange.com/api/v1.3/feed/FDSPMJYK538ET37RIGOY12PFFAXXYUIY/data'
+    urlhandyroute='https://api.balticexchange.com/api/v1.3/feed/FDSREHV3FRHP773368630ERWCAIU7CX0/data'
+
+    response = requests.get(urlhandy, headers=headers,params=params)
+    df=pd.DataFrame(response.json())  
+    spothandy=pd.DataFrame(df.loc[0,'data'])
+    spothandy.set_index('date',inplace=True)
+    spothandy.rename(columns={'value':'HS7TC'},inplace=True)
+
+    response = requests.get(urlhandyroute, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+
+    spoths1=pd.DataFrame(df.loc[0,'data'])
+    spoths1.set_index('date',inplace=True)
+    spoths1.rename(columns={'value':'HS1'},inplace=True)
+
+    spoths2=pd.DataFrame(df.loc[1,'data'])
+    spoths2.set_index('date',inplace=True)
+    spoths2.rename(columns={'value':'HS2'},inplace=True)
+
+    spoths3=pd.DataFrame(df.loc[2,'data'])
+    spoths3.set_index('date',inplace=True)
+    spoths3.rename(columns={'value':'HS3'},inplace=True)
+
+    spoths4=pd.DataFrame(df.loc[3,'data'])
+    spoths4.set_index('date',inplace=True)
+    spoths4.rename(columns={'value':'HS4'},inplace=True)
+
+    spoths5=pd.DataFrame(df.loc[4,'data'])
+    spoths5.set_index('date',inplace=True)
+    spoths5.rename(columns={'value':'HS5'},inplace=True)
+
+    spoths6=pd.DataFrame(df.loc[5,'data'])
+    spoths6.set_index('date',inplace=True)
+    spoths6.rename(columns={'value':'HS6'},inplace=True)
+
+    spoths7=pd.DataFrame(df.loc[6,'data'])
+    spoths7.set_index('date',inplace=True)
+    spoths7.rename(columns={'value':'HS7'},inplace=True)
+
+
+    spotnew=pd.merge(spothandy,spoths1,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spoths2,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spoths3,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spoths4,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spoths5,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spoths6,left_index=True,right_index=True,how='outer')
+    spotnew=pd.merge(spotnew,spoths7,left_index=True,right_index=True,how='outer')
+    spotnew.index=pd.to_datetime(spotnew.index)
+
+    spot=pd.read_csv('handyroute.csv')
+    spotold=spot.set_index('Date')
+    spotold.index=pd.to_datetime(spotold.index)
+
+    st.text('Handysize Route Data Before Update: '+str(spotold.index.date[-1]))
+
+    spot=pd.concat([spotold,spotnew])
+    spot.reset_index(inplace=True)
+    spot.rename(columns={'index':'Date'},inplace=True)
+    spot=spot.drop_duplicates(subset='Date',keep='last')
+    spot.set_index('Date',inplace=True)
+
+    st.text('Handysize Route Data After Update: '+str(spot.index.date[-1]))
+
+    spot.to_csv('handyroute.csv',index_label='Date')
+    
+    return spot
+
+handyroute=load_handyroute_data()
+
+if 'handyroute' not in st.session_state:
+    st.session_state['handyroute']=handyroute
+
+#Getting PMX FFA Data
+#@st.cache_data(ttl='12h')
+def load_pmx_ffa_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlpmxffa='https://api.balticexchange.com/api/v1.3/feed/FDSLG4CKMQ0QEYHE8NJ2DTGR2S6N5S7P/data'
+
+    response = requests.get(urlpmxffa, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+    ffapmx=pd.DataFrame(df.loc[0,'groupings'])
+
+    ffapmx_=pd.DataFrame()
+    for j in range(len(ffapmx.index)):
+        ffapmx_0=ffapmx.loc[j,'date']
+        ffapmx_n=pd.DataFrame(ffapmx.loc[j,'groups'])
+        for i in range(len(ffapmx_n.index)):
+            ffapmx_n_0=ffapmx_n.loc[i,'periodType']
+            ffapmx_n_n=pd.DataFrame(ffapmx_n.loc[i,'projections'])
+            ffapmx_n_n['periodType']=ffapmx_n_0
+            ffapmx_n_n['date']=ffapmx_0
+            ffapmx_=pd.concat([ffapmx_,ffapmx_n_n])
+            
+    ffapmx_[['Month','Year']]=ffapmx_['period'].str.split(' ',expand=True)
+    ffapmx_['Month'].replace({'Jan':'M1','Feb':'M2','Mar':'M3','Apr':'M4','May':'M5','Jun':'M6',
+                            'Jul':'M7','Aug':'M8','Sep':'M9','Oct':'M10','Nov':'M11','Dec':'M12',
+                            'Feb/Mar':'Q1','May/Jun':'Q2','Aug/Sep':'Q3','Nov/Dec':'Q4','Cal':'Y'},inplace=True)
+    ffapmx_['Contract']='20'+ffapmx_['Year']+'_'+ffapmx_['Month']
+    ffapmx_pt1=ffapmx_.pivot_table(index='archiveDate',columns='Contract',values='value',aggfunc='mean')
+    ffapmx_pt1.index=pd.to_datetime(ffapmx_pt1.index)
+
+    p4tcold=pd.read_csv('p4tc.csv')
+    p4tcold=p4tcold.set_index('Date')
+    p4tcold.index=pd.to_datetime(p4tcold.index)
+
+    st.text('FFA Data Before Update: '+str(p4tcold.index.date[-1]))
+
+    p4tc=pd.concat([p4tcold,ffapmx_pt1])
+    p4tc.reset_index(inplace=True)
+    p4tc.rename(columns={'index':'Date'},inplace=True)
+    p4tc=p4tc.drop_duplicates()
+    p4tc.set_index('Date',inplace=True)
+
+    st.text('FFA Data After Update: '+str(p4tc.index.date[-1]))
+
+    p4tc.to_csv('p4tc.csv',index_label='Date')
+
+    ffapmx_pt2=ffapmx_.pivot_table(index='archiveDate',columns='identifier',values='value',aggfunc='mean')
+    ffapmx_pt2.index=pd.to_datetime(ffapmx_pt2.index)
+    ffapmx_pt2=ffapmx_pt2[['4TC_PCURMON','4TC_P+1MON','4TC_P+2MON','4TC_P+3MON','4TC_P+4MON','4TC_P+5MON', 
+              '4TC_PCURQ','4TC_P+1Q','4TC_P+2Q','4TC_P+3Q','4TC_P+4Q','4TC_P+5Q',
+              '4TC_P+1CAL','4TC_P+2CAL','4TC_P+3CAL','4TC_P+4CAL','4TC_P+5CAL','4TC_P+6CAL','4TC_P+7CAL']]
+
+    p4tc_rold=pd.read_csv('p4tc_r.csv')
+    p4tc_rold=p4tc_rold.set_index('Date')
+    p4tc_rold.index=pd.to_datetime(p4tc_rold.index)
+
+    p4tc_r=pd.concat([p4tc_rold,ffapmx_pt2])
+    p4tc_r.reset_index(inplace=True)
+    p4tc_r.rename(columns={'index':'Date'},inplace=True)
+    p4tc_r=p4tc_r.drop_duplicates()
+    p4tc_r.set_index('Date',inplace=True)
+    p4tc_r.to_csv('p4tc_r.csv',index_label='Date')
+
+    spotpmx=spot[['P4TC']]
+
+    p4tc=pd.merge(spotpmx,p4tc,left_index=True,right_index=True,how='outer')
+
+    p4tc.dropna(subset='P4TC',inplace=True)
+
+    p4tc_r=pd.merge(spotpmx,p4tc_r,left_index=True,right_index=True,how='outer')
+    p4tc_r.dropna(subset='P4TC',inplace=True)
+
+    return p4tc, p4tc_r
+
+p4tc,p4tc_r=load_pmx_ffa_data()
+
+
+
+
+#Getting PMX FFA Data if API doesn't work
+@st.cache_data()
+def load_pmx_ffa_data_backup():
+    ffapmx=pd.read_csv('bfa_panamax_74.csv')
+    ffapmx[['Month','Year']]=ffapmx['FFADescription'].str.split(' ',expand=True)
+    ffapmx['Month'].replace({'Jan':'M1','Feb':'M2','Mar':'M3','Apr':'M4','May':'M5','Jun':'M6',
+                         'Jul':'M7','Aug':'M8','Sep':'M9','Oct':'M10','Nov':'M11','Dec':'M12',
+                          'Feb/Mar':'Q1','May/Jun':'Q2','Aug/Sep':'Q3','Nov/Dec':'Q4','Cal':'Y'},inplace=True)
+    ffapmx['NeedCorrection']=ffapmx['RouteIdentifier'].str.contains('CURQ')
+    ffapmx['Month']=np.where(ffapmx['NeedCorrection']==True,ffapmx['Month'].replace({'M3':'Q1','M6':'Q2','M9':'Q3','M12':'Q4'}),ffapmx['Month'])
+    ffapmx['Contract']='20'+ffapmx['Year']+'_'+ffapmx['Month']
+
+    ffap4tc=ffapmx[ffapmx['RouteIdentifier'].str.contains('4TC_P')]
+    ffap4tc_pt1=ffap4tc.pivot_table(index='ArchiveDate',columns='Contract',values='RouteAverage',aggfunc='mean')
+    ffap4tc_pt1.index=pd.to_datetime(ffap4tc_pt1.index,dayfirst=True)
+    ffap4tc_pt1.sort_index(inplace=True)
+
+    ffapmx_pt2=ffapmx.pivot_table(index='ArchiveDate',columns='RouteIdentifier',values='RouteAverage',aggfunc='mean')
+    ffapmx_pt2.index=pd.to_datetime(ffapmx_pt2.index,dayfirst=True)
+    ffapmx_pt2.sort_index(inplace=True)
+    ffap4tc_pt2=ffapmx_pt2[['4TC_PCURMON','4TC_P+1MON','4TC_P+2MON','4TC_P+3MON','4TC_P+4MON','4TC_P+5MON', 
+              '4TC_PCURQ','4TC_P+1Q','4TC_P+2Q','4TC_P+3Q','4TC_P+4Q','4TC_P+5Q',
+              '4TC_P+1CAL','4TC_P+2CAL','4TC_P+3CAL','4TC_P+4CAL','4TC_P+5CAL','4TC_P+6CAL','4TC_P+7CAL']]
+
+    spotpmx=spot[['P4TC']]
+
+    p4tc=pd.merge(spotpmx,ffap4tc_pt1,left_index=True,right_index=True,how='outer')
+    p4tc.dropna(subset='P4TC',inplace=True)
+
+    p4tc_r=pd.merge(spotpmx,ffap4tc_pt2,left_index=True,right_index=True,how='outer')
+    p4tc_r.dropna(subset='P4TC',inplace=True)
+
+    return p4tc, p4tc_r
+
+#p4tc=load_pmx_ffa_data_backup()[0]
+#p4tc_r=load_pmx_ffa_data_backup()[1]
+
+
+if 'p4tc' not in st.session_state:
+    st.session_state['p4tc']=p4tc
+if 'p4tc_r' not in st.session_state:
+    st.session_state['p4tc_r']=p4tc_r
+
+
+
+
+#Getting Cape FFA Data
+#@st.cache_data(ttl='12h')
+def load_cape_ffa_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlcapeffa='https://api.balticexchange.com/api/v1.3/feed/FDS2QE6Y0F4LPFOKC4YYVCM38NYVR5DU/data'
+
+    response = requests.get(urlcapeffa, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+    ffacape=pd.DataFrame(df.loc[0,'groupings'])
+
+    ffacape_=pd.DataFrame()
+    for j in range(len(ffacape.index)):
+        ffacape_0=ffacape.loc[j,'date']
+        ffacape_n=pd.DataFrame(ffacape.loc[j,'groups'])
+        for i in range(len(ffacape_n.index)):
+            ffacape_n_0=ffacape_n.loc[i,'periodType']
+            ffacape_n_n=pd.DataFrame(ffacape_n.loc[i,'projections'])
+            ffacape_n_n['periodType']=ffacape_n_0
+            ffacape_n_n['date']=ffacape_0
+            ffacape_=pd.concat([ffacape_,ffacape_n_n])
+            
+    ffacape_[['Month','Year']]=ffacape_['period'].str.split(' ',expand=True)
+    ffacape_['Month'].replace({'Jan':'M1','Feb':'M2','Mar':'M3','Apr':'M4','May':'M5','Jun':'M6',
+                            'Jul':'M7','Aug':'M8','Sep':'M9','Oct':'M10','Nov':'M11','Dec':'M12',
+                            'Feb/Mar':'Q1','May/Jun':'Q2','Aug/Sep':'Q3','Nov/Dec':'Q4','Cal':'Y'},inplace=True)
+    ffacape_['Contract']='20'+ffacape_['Year']+'_'+ffacape_['Month']
+    ffacape_pt1=ffacape_.pivot_table(index='archiveDate',columns='Contract',values='value',aggfunc='mean')
+    ffacape_pt1.index=pd.to_datetime(ffacape_pt1.index)
+
+    c5tcold=pd.read_csv('c5tc.csv')
+    c5tcold=c5tcold.set_index('Date')
+    c5tcold.index=pd.to_datetime(c5tcold.index)
+    c5tc=pd.concat([c5tcold,ffacape_pt1])
+    c5tc.reset_index(inplace=True)
+    c5tc.rename(columns={'index':'Date'},inplace=True)
+    c5tc=c5tc.drop_duplicates()
+    c5tc.set_index('Date',inplace=True)
+    c5tc.to_csv('c5tc.csv',index_label='Date')
+
+    ffacape_pt2=ffacape_.pivot_table(index='archiveDate',columns='identifier',values='value',aggfunc='mean')
+    ffacape_pt2.index=pd.to_datetime(ffacape_pt2.index)
+    ffacape_pt2=ffacape_pt2[['5TC_CCURMON','5TC_C+1MON','5TC_C+2MON','5TC_C+3MON','5TC_C+4MON','5TC_C+5MON', 
+              '5TC_CCURQ','5TC_C+1Q','5TC_C+2Q','5TC_C+3Q','5TC_C+4Q','5TC_C+5Q',
+              '5TC_C+1CAL','5TC_C+2CAL','5TC_C+3CAL','5TC_C+4CAL','5TC_C+5CAL','5TC_C+6CAL','5TC_C+7CAL']]
+
+    c5tc_rold=pd.read_csv('c5tc_r.csv')
+    c5tc_rold=c5tc_rold.set_index('Date')
+    c5tc_rold.index=pd.to_datetime(c5tc_rold.index)
+    c5tc_r=pd.concat([c5tc_rold,ffacape_pt2])
+    c5tc_r.reset_index(inplace=True)
+    c5tc_r.rename(columns={'index':'Date'},inplace=True)
+    c5tc_r=c5tc_r.drop_duplicates()
+    c5tc_r.set_index('Date',inplace=True)
+    c5tc_r.to_csv('c5tc_r.csv',index_label='Date')
+    
+    spotcape=spot[['C5TC']]
+
+    c5tc=pd.merge(spotcape,c5tc,left_index=True,right_index=True,how='outer')
+    c5tc.dropna(subset='C5TC',inplace=True)
+
+    c5tc_r=pd.merge(spotcape,c5tc_r,left_index=True,right_index=True,how='outer')
+    c5tc_r.dropna(subset='C5TC',inplace=True)
+
+    return c5tc, c5tc_r
+
+c5tc,c5tc_r=load_cape_ffa_data()
+
+
+#Getting Cape FFA Data if API doesn't work
+@st.cache_data()
+def load_cape_ffa_data_backup():
+    ffacape=pd.read_csv('bfa_cape.csv')
+    ffacape[['Month','Year']]=ffacape['FFADescription'].str.split(' ',expand=True)
+    ffacape['Month'].replace({'Jan':'M1','Feb':'M2','Mar':'M3','Apr':'M4','May':'M5','Jun':'M6',
+                         'Jul':'M7','Aug':'M8','Sep':'M9','Oct':'M10','Nov':'M11','Dec':'M12',
+                          'Feb/Mar':'Q1','May/Jun':'Q2','Aug/Sep':'Q3','Nov/Dec':'Q4','Cal':'Y'},inplace=True)
+    ffacape['NeedCorrection']=ffacape['RouteIdentifier'].str.contains('CURQ')
+    ffacape['Month']=np.where(ffacape['NeedCorrection']==True,ffacape['Month'].replace({'M3':'Q1','M6':'Q2','M9':'Q3','M12':'Q4'}),ffacape['Month'])
+    ffacape['Contract']='20'+ffacape['Year']+'_'+ffacape['Month']
+
+    ffac5tc=ffacape[ffacape['RouteIdentifier'].str.contains('5TC_C')]
+    ffac5tc_pt1=ffac5tc.pivot_table(index='ArchiveDate',columns='Contract',values='RouteAverage',aggfunc='mean')
+    ffac5tc_pt1.index=pd.to_datetime(ffac5tc_pt1.index,dayfirst=True)
+    ffac5tc_pt1.sort_index(inplace=True)
+
+    ffacape_pt2=ffacape.pivot_table(index='ArchiveDate',columns='RouteIdentifier',values='RouteAverage',aggfunc='mean')
+    ffacape_pt2.index=pd.to_datetime(ffacape_pt2.index,dayfirst=True)
+    ffacape_pt2.sort_index(inplace=True)
+    ffac5tc_pt2=ffacape_pt2[['5TC_CCURMON','5TC_C+1MON','5TC_C+2MON','5TC_C+3MON','5TC_C+4MON','5TC_C+5MON', 
+              '5TC_CCURQ','5TC_C+1Q','5TC_C+2Q','5TC_C+3Q','5TC_C+4Q','5TC_C+5Q','5TC_C+6Q',
+              '5TC_C+1CAL','5TC_C+2CAL','5TC_C+3CAL','5TC_C+4CAL','5TC_C+5CAL','5TC_C+6CAL','5TC_C+7CAL','5TC_C+8CAL','5TC_C+9CAL']]
+
+    spotcape=spot[['C5TC']]
+
+    c5tc=pd.merge(spotcape,ffac5tc_pt1,left_index=True,right_index=True,how='outer')
+    c5tc.dropna(subset='C5TC',inplace=True)
+
+    c5tc_r=pd.merge(spotcape,ffac5tc_pt2,left_index=True,right_index=True,how='outer')
+    c5tc_r.dropna(subset='C5TC',inplace=True)
+
+    return c5tc, c5tc_r
+
+#c5tc=load_cape_ffa_data_backup()[0]
+#c5tc_r=load_cape_ffa_data_backup()[1]
+
+
+if 'c5tc' not in st.session_state:
+    st.session_state['c5tc']=c5tc
+if 'c5tc_r' not in st.session_state:
+    st.session_state['c5tc_r']=c5tc_r
+
+
+
+
+#Getting SMX FFA Data
+#@st.cache_data(ttl='12h')
+def load_smx_ffa_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlsmxffa='https://api.balticexchange.com/api/v1.3/feed/FDSGGYH6236OC931DOFJ7O4RJ0CK0A8B/data'
+
+    response = requests.get(urlsmxffa, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+    ffasmx=pd.DataFrame(df.loc[0,'groupings'])
+
+    ffasmx_=pd.DataFrame()
+    for j in range(len(ffasmx.index)):
+        ffasmx_0=ffasmx.loc[j,'date']
+        ffasmx_n=pd.DataFrame(ffasmx.loc[j,'groups'])
+        for i in range(len(ffasmx_n.index)):
+            ffasmx_n_0=ffasmx_n.loc[i,'periodType']
+            ffasmx_n_n=pd.DataFrame(ffasmx_n.loc[i,'projections'])
+            ffasmx_n_n['periodType']=ffasmx_n_0
+            ffasmx_n_n['date']=ffasmx_0
+            ffasmx_=pd.concat([ffasmx_,ffasmx_n_n])
+            
+    ffasmx_[['Month','Year']]=ffasmx_['period'].str.split(' ',expand=True)
+    ffasmx_['Month'].replace({'Jan':'M1','Feb':'M2','Mar':'M3','Apr':'M4','May':'M5','Jun':'M6',
+                            'Jul':'M7','Aug':'M8','Sep':'M9','Oct':'M10','Nov':'M11','Dec':'M12',
+                            'Feb/Mar':'Q1','May/Jun':'Q2','Aug/Sep':'Q3','Nov/Dec':'Q4','Cal':'Y'},inplace=True)
+    ffasmx_['Contract']='20'+ffasmx_['Year']+'_'+ffasmx_['Month']
+    ffasmx_pt1=ffasmx_.pivot_table(index='archiveDate',columns='Contract',values='value',aggfunc='mean')
+    ffasmx_pt1.index=pd.to_datetime(ffasmx_pt1.index)
+
+    s10tcold=pd.read_csv('s10tc.csv')
+    s10tcold=s10tcold.set_index('Date')
+    s10tcold.index=pd.to_datetime(s10tcold.index)
+    s10tc=pd.concat([s10tcold,ffasmx_pt1])
+    s10tc.reset_index(inplace=True)
+    s10tc.rename(columns={'index':'Date'},inplace=True)
+    s10tc=s10tc.drop_duplicates()
+    s10tc.set_index('Date',inplace=True)
+    s10tc.to_csv('s10tc.csv',index_label='Date')
+
+    ffasmx_pt2=ffasmx_.pivot_table(index='archiveDate',columns='identifier',values='value',aggfunc='mean')
+    ffasmx_pt2.index=pd.to_datetime(ffasmx_pt2.index)
+    ffasmx_pt2=ffasmx_pt2[['10TC_SCURMON','10TC_S+1MON','10TC_S+2MON','10TC_S+3MON','10TC_S+4MON','10TC_S+5MON', 
+              '10TC_SCURQ','10TC_S+1Q','10TC_S+2Q','10TC_S+3Q','10TC_S+4Q',
+              '10TC_S+1CAL','10TC_S+2CAL','10TC_S+3CAL','10TC_S+4CAL','10TC_S+5CAL','10TC_S+6CAL','10TC_S+7CAL']]
+
+    s10tc_rold=pd.read_csv('s10tc_r.csv')
+    s10tc_rold=s10tc_rold.set_index('Date')
+    s10tc_rold.index=pd.to_datetime(s10tc_rold.index)
+    s10tc_r=pd.concat([s10tc_rold,ffasmx_pt2])
+    s10tc_r.reset_index(inplace=True)
+    s10tc_r.rename(columns={'index':'Date'},inplace=True)
+    s10tc_r=s10tc_r.drop_duplicates()
+    s10tc_r.set_index('Date',inplace=True)
+    s10tc_r.to_csv('s10tc_r.csv',index_label='Date')
+
+    spotsmx=spot[['S10TC']]
+
+    s10tc=pd.merge(spotsmx,s10tc,left_index=True,right_index=True,how='outer')
+    s10tc.dropna(subset='S10TC',inplace=True)
+
+    s10tc_r=pd.merge(spotsmx,s10tc_r,left_index=True,right_index=True,how='outer')
+    s10tc_r.dropna(subset='S10TC',inplace=True)
+
+    return s10tc, s10tc_r
+
+s10tc,s10tc_r=load_smx_ffa_data()
+
+
+
+
+
+#Getting SMX FFA Data if API doesn't work
+@st.cache_data()
+def load_smx_ffa_data_backup():
+    ffasmx=pd.read_csv('bfa_supramax.csv')
+    ffasmx[['Month','Year','others']]=ffasmx['FFADescription'].str.split(' ',expand=True)
+    ffasmx['Month'].replace({'Jan':'M1','Feb':'M2','Mar':'M3','Apr':'M4','May':'M5','Jun':'M6',
+                         'Jul':'M7','Aug':'M8','Sep':'M9','Oct':'M10','Nov':'M11','Dec':'M12',
+                          'Feb/Mar':'Q1','May/Jun':'Q2','Aug/Sep':'Q3','Nov/Dec':'Q4','Cal':'Y'},inplace=True)
+    ffasmx['NeedCorrection']=ffasmx['RouteIdentifier'].str.contains('CURQ')
+    ffasmx['Month']=np.where(ffasmx['NeedCorrection']==True,ffasmx['Month'].replace({'M3':'Q1','M6':'Q2','M9':'Q3','M12':'Q4'}),ffasmx['Month'])
+    ffasmx['Contract']='20'+ffasmx['Year']+'_'+ffasmx['Month']
+
+    ffas10tc=ffasmx[ffasmx['RouteIdentifier'].str.contains('10TC_S')]
+    ffas10tc_pt1=ffas10tc.pivot_table(index='ArchiveDate',columns='Contract',values='RouteAverage',aggfunc='mean')
+    ffas10tc_pt1.index=pd.to_datetime(ffas10tc_pt1.index,dayfirst=True)
+    ffas10tc_pt1.sort_index(inplace=True)
+
+    ffasmx_pt2=ffasmx.pivot_table(index='ArchiveDate',columns='RouteIdentifier',values='RouteAverage',aggfunc='mean')
+    ffasmx_pt2.index=pd.to_datetime(ffasmx_pt2.index,dayfirst=True)
+    ffasmx_pt2.sort_index(inplace=True)
+    ffas10tc_pt2=ffasmx_pt2[['10TC_SCURMON','10TC_S+1MON','10TC_S+2MON','10TC_S+3MON','10TC_S+4MON','10TC_S+5MON', 
+              '10TC_SCURQ','10TC_S+1Q','10TC_S+2Q','10TC_S+3Q','10TC_S+4Q',
+              '10TC_S+1CAL','10TC_S+2CAL','10TC_S+3CAL','10TC_S+4CAL','10TC_S+5CAL','10TC_S+6CAL','10TC_S+7CAL']]
+
+    spotsmx=spot[['S10TC']]
+
+    s10tc=pd.merge(spotsmx,ffas10tc_pt1,left_index=True,right_index=True,how='outer')
+    s10tc.dropna(subset='S10TC',inplace=True)
+
+    s10tc_r=pd.merge(spotsmx,ffas10tc_pt2,left_index=True,right_index=True,how='outer')
+    s10tc_r.dropna(subset='S10TC',inplace=True)
+
+    return s10tc, s10tc_r
+
+#s10tc=load_smx_ffa_data_backup()[0]
+#s10tc_r=load_smx_ffa_data_backup()[1]
+
+
+if 's10tc' not in st.session_state:
+    st.session_state['s10tc']=s10tc
+if 's10tc_r' not in st.session_state:
+    st.session_state['s10tc_r']=s10tc_r
+
+
+
+
+
+#Getting Handy FFA Data
+@st.cache_data()
+def load_handy_ffa_data():
+    headers = {'x-apikey': 'FMNNXJKJMSV6PE4YA36EOAAJXX1WAH84KSWNU8PEUFGRHUPJZA3QTG1FLE09SXJF'}
+    dateto=pd.to_datetime('today')
+    datefrom=dateto-BDay(15)
+    params={'from':datefrom,'to':dateto}
+    urlhandyffa='https://api.balticexchange.com/api/v1.3/feed/FDSPIQYIH9UUI56BL6U83DUECJNMQKMW/data'
+
+    response = requests.get(urlhandyffa, headers=headers,params=params)
+    df=pd.DataFrame(response.json())
+    ffahandy=pd.DataFrame(df.loc[0,'groupings'])
+
+    ffahandy_=pd.DataFrame()
+    for j in range(len(ffahandy.index)):
+        ffahandy_0=ffahandy.loc[j,'date']
+        ffahandy_n=pd.DataFrame(ffahandy.loc[j,'groups'])
+        for i in range(len(ffahandy_n.index)):
+            ffahandy_n_0=ffahandy_n.loc[i,'periodType']
+            ffahandy_n_n=pd.DataFrame(ffahandy_n.loc[i,'projections'])
+            ffahandy_n_n['periodType']=ffahandy_n_0
+            ffahandy_n_n['date']=ffahandy_0
+            ffahandy_=pd.concat([ffahandy_,ffahandy_n_n])
+            
+    ffahandy_[['Month','Year']]=ffahandy_['period'].str.split(' ',expand=True)
+    ffahandy_['Month'].replace({'Jan':'M1','Feb':'M2','Mar':'M3','Apr':'M4','May':'M5','Jun':'M6',
+                            'Jul':'M7','Aug':'M8','Sep':'M9','Oct':'M10','Nov':'M11','Dec':'M12',
+                            'Feb/Mar':'Q1','May/Jun':'Q2','Aug/Sep':'Q3','Nov/Dec':'Q4','Cal':'Y'},inplace=True)
+    ffahandy_['Contract']='20'+ffahandy_['Year']+'_'+ffahandy_['Month']
+    ffahandy_pt1=ffahandy_.pivot_table(index='archiveDate',columns='Contract',values='value',aggfunc='mean')
+    ffahandy_pt1.index=pd.to_datetime(ffahandy_pt1.index)
+
+
+
+    hs7tcold=pd.read_csv('hs7tc.csv')
+    hs7tcold=hs7tcold.set_index('Date')
+    hs7tcold.index=pd.to_datetime(hs7tcold.index)
+    hs7tc=pd.concat([hs7tcold,ffahandy_pt1])  
+
+    hs7tc.reset_index(inplace=True)
+    hs7tc.rename(columns={'index':'Date'},inplace=True)
+    hs7tc=hs7tc.drop_duplicates()
+    hs7tc.set_index('Date',inplace=True)
+    hs7tc.to_csv('hs7tc.csv',index_label='Date')
+
+    ffahandy_pt2=ffahandy_.pivot_table(index='archiveDate',columns='identifier',values='value',aggfunc='mean')
+    ffahandy_pt2.index=pd.to_datetime(ffahandy_pt2.index)
+    ffahandy_pt2=ffahandy_pt2[['TC_H38CURMON','TC_H38+1MON','TC_H38+2MON','TC_H38+3MON','TC_H38+4MON','TC_H38+5MON', 
+              'TC_H38CURQ','TC_H38+1Q','TC_H38+2Q','TC_H38+3Q','TC_H38+4Q',
+              'TC_H38+1CAL','TC_H38+2CAL','TC_H38+3CAL','TC_H38+4CAL','TC_H38+5CAL','TC_H38+6CAL','TC_H38+7CAL']]
+
+    hs7tc_rold=pd.read_csv('hs7tc_r.csv')
+    hs7tc_rold=hs7tc_rold.set_index('Date')
+    hs7tc_rold.index=pd.to_datetime(hs7tc_rold.index)
+    hs7tc_r=pd.concat([hs7tc_rold,ffahandy_pt2])
+    hs7tc_r.reset_index(inplace=True)
+    hs7tc_r.rename(columns={'index':'Date'},inplace=True)
+    hs7tc_r=hs7tc_r.drop_duplicates()
+    hs7tc_r.set_index('Date',inplace=True)
+    hs7tc_r.to_csv('hs7tc_r.csv',index_label='Date')
+
+    spothandy=spot[['HS7TC']]
+
+    hs7tc=pd.merge(spothandy,hs7tc,left_index=True,right_index=True,how='outer')
+    hs7tc.dropna(subset='HS7TC',inplace=True)
+
+    hs7tc_r=pd.merge(spothandy,hs7tc_r,left_index=True,right_index=True,how='outer')
+    hs7tc_r.dropna(subset='HS7TC',inplace=True)
+
+    return hs7tc, hs7tc_r
+
+hs7tc,hs7tc_r=load_handy_ffa_data()
+
+
+
+if 'hs7tc' not in st.session_state:
+    st.session_state['hs7tc']=hs7tc
+if 'hs7tc_r' not in st.session_state:
+    st.session_state['hs7tc_r']=hs7tc_r
+
+
+
+
+
+
+
+
+st.text('Freight Data Done')
+
+
+st.write('All Data Loaded!!')
+
+def update_data():
+    for key in st.session_state.keys():
+        del st.session_state[key]
+    st.cache_data.clear()
+
+st.button('Update Data',on_click=update_data)
+st.text('Data is automatically reloaded for potential updates every 12 hours.')
+st.text('If you would like to trigger the reload right now, please click on the above "Update Data" button.')
