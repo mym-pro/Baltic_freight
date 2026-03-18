@@ -1,6 +1,6 @@
 pandas
 numpy
-streamlit
+streamlit>=1.30.0
 plotly
 ta
 altair>=5.0
