@@ -3,3 +3,4 @@ numpy
 streamlit
 plotly
 ta
+altair>=5.0
